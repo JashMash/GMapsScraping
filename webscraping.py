@@ -5,7 +5,7 @@ from selenium.webdriver.common.by import By
 
 from parsel import Selector
 
-from bs4 import BeautifulSoup
+# from bs4 import BeautifulSoup
 import requests
 
 from time import sleep
@@ -25,179 +25,202 @@ from geopy.geocoders import Nominatim
 SCROLL_PAUSE_TIME = 0.5
 
 
-driver = webdriver.Chrome()
-
-# driver.get("https://www.google.com/maps/@51.0593836,-114.0974328,10.79z")
-
-
-class LocationData:
-    name: str
-    location: str
-    rating: int
-    reviews: int
-    category: str
-    price: str
-    url: str
-    hours: list
-    coords: list
-    
 
 sleep(2)
 
 
-page_content = driver.page_source
-response = Selector(page_content)
 class LocationScraper:
     def __init__(self, city, country) -> None:
+        self.driver = webdriver.Chrome()
         self.city = city
         self.country = country
-        self.geolocator = Nominatim(user_agent="location_conversion_test")
+        self.geolocator = Nominatim(user_agent="location_test1", timeout=10)
         rel_coords = self.geolocator.geocode(f"{self.city}, {self.country}")
+        sleep(2)
         self.rel_coords = [rel_coords.latitude, rel_coords.longitude]
         pass
 
-    def communities_finder(self):
-        driver.get(url = f"https://www.google.com/maps/search/neighbourhoods+in+{self.city}+{self.country}/")
+    def community_finder(self) -> dict:
+        """
+            Finds all communities within the given city.
+
+            Output:
+                communities : <dict> Contains all communities and their locations
+        """
+        self.driver.get(url = f"https://www.google.com/maps/search/neighbourhoods+in+{self.city}+{self.country}/")
         
-        hoods = set()
+        communities = dict()
 
-        results = self.scroller(driver)
+        results_par, results_sel = self.scroller(self.driver)
 
-        # results = driver.find_elements(By.XPATH, '//div[contains(@aria-label, "Results for")]/div/div[./a]')
-
-        for el in results:
-            if el.accessible_name not in hoods:
-                hoods.add(el.accessible_name)
-        return hoods
+        for (el, par) in zip(results_sel, results_par):
+            if el.accessible_name not in communities.keys():
+                communities[el.accessible_name] = par.xpath('./a/@href').get()
+            else:
+                ## If duplicate names found
+                count = 2
+                new_name = el.accessible_name+" @@ "+str(count)
+                
+                ## cycling through different names
+                while new_name in communities.keys():
+                    count+=1
+                    new_name = el.accessible_name+" @@ "+str(count)
+                
+                communities[el.accessible_name] = par.xpath('./a/@href').get()
+            
+        
+        return communities
     
 
-    def search_locations(self, community: str= "", location_type: str = "parks"):
-        driver.get(url = f"https://www.google.com/maps/search/{location_type}+in+{community}+{self.city}+{self.country}/")
-        search_box = driver.find_element(By.CLASS_NAME, "tactile-searchbox-input")
-        search_box.send_keys(location_type)
+    def search_POIs(self, POI_type: str = "parks") -> dict:
+        """
+            Given a Point of interest it will return all locations found 
+            with the search in the city and more information on them.
 
-        results_par, results_sel = self.scroller(driver)
+            Input:
+                POI_type : <str> A category of a location such as park, 
+                                    malls, restaurants, bars, etc. 
+
+            Output:
+            TODO: Need to change to Dataframe for easier input into DBs
+                loc_dict : <dict> For every location found in city with 
+                                information:
+                                    - Google maps URL :      'link'
+                                    - Rating :               'rating'
+                                    - # of reviews :         'reviews'
+                                    - Address :              'location'
+                                    - Price ($-$$$$) :       'price'
+                                    - Category :             'category'
+                                    - Hours of operation :   'hours'
+                                    - Coordinates (Longitude and Latitude) : 'coords' 
+        """
+
+        self.driver.get(url = f"https://www.google.com/maps/search/{POI_type}+in+{self.city}+{self.country}/")
+        search_box = self.driver.find_element(By.CLASS_NAME, "tactile-searchbox-input")
+        search_box.send_keys(POI_type)
+
+        # Finds all results in the area
+        results_par, results_sel = self.scroller(self.driver)
 
         loc_dict= {}
         all_entries = set()
-        links =[]
 
-        # for el in results_par:
-        #     driver.get(url = el.xpath('./a/@href').get())
-        #     # page = requests.get(el.xpath('./a/@href'))
-        #     # soup = BeautifulSoup(page.content, "html.parser")
-        #     soup = BeautifulSoup(driver.page_source, "html.parser")
-        #     print(self.__parse_place(soup))
+        # Failure tracker
+        details_low_failures = dict()
 
-        fail_count=0
-        fail_names = set()
-        fail_dict = dict()
+
         for (el, par) in zip(results_sel, results_par):
             if el.accessible_name not in all_entries:
                 all_entries.add(el.accessible_name)
 
-                parsed_data=self.get_location_details_low(el.text)
+                parsed_data=self.get_POI_details_low(el.text)
                 if parsed_data is not None:
                     parsed_data['link']= par.xpath('./a/@href').get()
-                    # parsed_data['Hours'] = self.get_hours(parsed_data['link'])
                     loc_dict[el.accessible_name] =parsed_data
                     
                 else:
-                    fail_count+=1
-                    fail_names.add(el.accessible_name)
-                    fail_dict[el.accessible_name] = par.xpath('./a/@href').get()
+                    details_low_failures[el.accessible_name] = par.xpath('./a/@href').get()
                     all_entries.remove(el.accessible_name)
             else:
-                ## for some reason if they have the same name
+                ## If duplicate names found
                 count = 2
-                name = el.accessible_name+" @@ "+str(count)
+                new_name = el.accessible_name+" @@ " + str(count)
                 
                 ## cycling through different names
-                while name in loc_dict.keys():
+                while new_name in loc_dict.keys():
                     count+=1
-                    name = el.accessible_name+" @@ "+str(count)
+                    new_name = el.accessible_name+" @@ " + str(count)
+                
+                all_entries.add(new_name)
 
-                parsed_data=self.get_location_details_low(el.text)
+                parsed_data=self.get_POI_details_low(el.text)
                 if parsed_data is not None:
                     parsed_data['link']= par.xpath('./a/@href').get()
-                    # parsed_data['Hours'] = self.get_hours(parsed_data['link'])
-                    loc_dict[name] =parsed_data
+                    loc_dict[new_name] =parsed_data
                     
                 else:
-                    fail_count+=1
-                    fail_names.add(name)
-                    fail_dict[name] = par.xpath('./a/@href').get()
+                    details_low_failures[new_name] = par.xpath('./a/@href').get()
+                    all_entries.remove(new_name)
 
-        special_failures = dict()
-        loc_dict, special_failures = self.get_location_details_high(loc_dict)
+        details_high_failures = dict()
+        loc_dict, details_high_failures = self.get_POI_details_high(loc_dict)
 
-        print(f"\nFAILED TO FIND DATA FOR: {fail_count}")
-        for i in fail_names:
+        print(f"\nDetails Low Fails: {len(details_low_failures)}")
+        for i in details_low_failures.keys():
             print(i, end="  |  ")
         
-        print(f"\nSPECIAL FAILS: {len(special_failures)}")
-        for i in special_failures.keys():
+        print(f"\nDetails High Fails: {len(details_high_failures)}")
+        for i in details_high_failures.keys():
             print(i, end="  |  ")
 
-        print(f"\nNumber of {location_type} found: {len(loc_dict)}")
+        print(f"\nNumber of {POI_type} found: {len(loc_dict)}")
 
         return loc_dict
 
-    def get_location_details_low(self, data_str: str) -> dict:
+    def get_POI_details_low(self, data_str: str) -> dict:
         """
-            Takes in a string and parses out the following:
+            Parses out information from searched list of items.
+
+            Input:
+                data_str : <str> containing:
+                                Category they call themselves as,
+                                Location,
+                                Rating out of 5,
+                                Number of reviews,
+                                Price in number of '$' symbols ranging from $-$$$$
             
-                Category they call themselves as,
-                Location,
-                Rating out of 5,
-                Number of reviews,
-                Price in number of '$' symbols ranging from 1-4
-            
-            Returns as a dict with the keys:
-            ['category','location', 'rating', 'price']
+            Output:
+                loc_low : <dict> with the following keys:
+                                ['category', 'rating', 'reviews', 'price']
         """
         t_split = data_str.split('\n')
 
         if any("store" in s for s in t_split):
             return None
 
-        res = {}
+        loc_low = {}
 
         try:
             if t_split[0]=="Ad":
                 rating_price = t_split[4].split(' · ')
-                res['category'], res['location'] = t_split[5].split(' · ')
+                loc_low['category'], _ = t_split[5].split(' · ')
             else:
                 rating_price = t_split[1].split(' · ')
-                res['category'], res['location'] = t_split[2].split(' · ')
+                loc_low['category'], _ = t_split[2].split(' · ')
 
-            res['rating'], res['reviews'] = rating_price[0][:-1].split('(')
-            res['rating'] = res['rating'].replace("Ad ", "")
+            loc_low['rating'], loc_low['reviews'] = rating_price[0][:-1].split('(')
+            loc_low['rating'] = loc_low['rating'].replace("Ad ", "")
             try:
-                res['price'] = rating_price[1]
+                loc_low['price'] = rating_price[1]
             except:
-                res['price']='NA'
+                loc_low['price']='NA'
         except:
             return None
         
-        return res
+        return loc_low
 
-    def get_location_details_high(self, loc_dict:dict) -> dict:
+    def get_POI_details_high(self, loc_dict:dict) -> dict:
         """
-            This takes all the locations found and find their 
-            hours and coordinates
+            Takes all the POI's found and finds their 
+            hours, coordinates, and address
 
-            adds dict keys to each location, keys:
-            ['hours', 'coords']
+            Input:
+                loc_dict : <dict> Contains all POI details
+
+            Output:
+                loc_dict: <dict> Contains all POI details
+                            Add following info to each location, 
+                            with keys:
+                            ['hours', 'coords', 'location']
         """
-        driver2 = webdriver.Chrome()
+        location_driver = webdriver.Chrome()
 
         failures = dict()
 
         for key in loc_dict.keys():
             curr_url = loc_dict[key]['link']
-            driver2.get(url=curr_url)
-            response = Selector(driver2.page_source)
+            location_driver.get(url=curr_url)
+            response = Selector(location_driver.page_source)
 
             # GET HOURS
             loc_dict[key]['hours'] = self.get_hours(response)
@@ -251,26 +274,60 @@ class LocationScraper:
 
         all_hours= {}
         for day_h in all_day_hours:
-            day, hours = day_h.split(", ")
+            day_hours_split = day_h.split(", ")
+            if len(day_hours_split) >2:
+                # holiday check
+                day, hours, _ = day_hours_split
+                day = day.split('(')[0]
+                print("got in here")
+                with open("./tests/holiday_hours.txt", "w") as f:
+                    f.write(response)
+            else:  
+                day, hours = day_hours_split
             day = day.replace(' ', '')
             if hours =="Open 24 hours":
                 all_hours[day]=hours
             elif hours != "Closed":
-                open, close = hours.split(" to ")
-                all_hours[day]={"Open": open, "Close": close}
+                open_t, close_t = hours.split(" to ")
+                all_hours[day]={"Open": self.military_time(open_t), "Close": self.military_time(close_t)}
             else:
                 all_hours[day]="Closed"
 
         return all_hours
+
+    def military_time(self, time:str)->str:
+        """
+            Converts 12 hour time to 24 hour clock
+
+            Input:
+                time : <str> 12 hour time, In format "5 p.m." or "6:30 a.m."
+            
+            Output:
+                out_time : <str> 24 hour time, In format "17:00" or "6:30"
+        """
+        time, mered = time.split(' ')
+        offset=0
+        if mered =='p.m.':
+            offset = 12
+        
+        if ':' in time:
+            hours, mins = time.split(':')
+            hours = int(hours) + offset
+            out_time = str(hours)+':'+mins
+        else:
+            hours = int(time) + offset
+            out_time = str(hours)+':00'
+        return out_time
 
     def get_address(self, response)->str:
         """
             Retreives POI's address with given html.
 
             Input:
-                response : <html> Loaction's google maps page
+                response : <html> POI's google maps page
             
             Output:
+                address : <str> Address of POI
         """
         results_par = response.xpath('//button[@data-item-id = "address"]')
         unformated_address = results_par.xpath('./@aria-label').get()
@@ -287,10 +344,10 @@ class LocationScraper:
             (city's coordinates) and determines POI's coordinates.
 
             Input:
-                response : <html> Loaction's google maps page
+                response : <html> POI's google maps page
             
             Output:
-                coordinates : <list> Contains latitude and longitude
+                coordinates : <list> Contains latitude and longitude of POI
         """
         
         results_par = response.xpath('//button[contains(@aria-label, "Plus code:")]')
@@ -320,19 +377,19 @@ class LocationScraper:
             different information.
 
             Input:
-
+                driver : <selenium.webdriver.chrome>
             Output:
-                results_par : 
-                results_sel : <parcel
+                results_par : <list[parsel.selector]>
+                results_sel : <list[selenium.webdriver.remote.webelement]>
 
         """
         html = driver.find_element(By.XPATH, '//div[contains(@aria-label, "Results for")]')
-        while True:
-            html.send_keys(Keys.END)
+        # while True:
+        #     html.send_keys(Keys.END)
 
-            end = driver.find_elements(By.XPATH, '//div[contains(@aria-label, "Results for")]/div/div')[-1]
-            if end.text == "You've reached the end of the list.":
-                break
+        #     end = driver.find_elements(By.XPATH, '//div[contains(@aria-label, "Results for")]/div/div')[-1]
+        #     if end.text == "You've reached the end of the list.":
+        #         break
         
         page_content = driver.page_source
         response = Selector(page_content)
@@ -341,51 +398,17 @@ class LocationScraper:
         return results_par, results_sel
     
 
-# def dict_reader(loc_dict):
-#     driver2 = webdriver.Chrome()
 
-#     current_dateTime = datetime.now(pytz.timezone("Canada/Mountain"))
-#     # print(current_dateTime.strftime("%A"))
-#     day = current_dateTime.strftime("%A")
-    
-#     for i in loc_dict.keys():
-#         driver2.get(url=loc_dict[i]['link'])
-#         response = Selector(driver2.page_source)
-#         results_sel = driver2.find_elements(By.XPATH, '//div[contains(@aria-label, "'+ day +',")]')
-
-#         results_par = response.xpath('//div[contains(@aria-label, "'+ day +',")]')
-#         potential_hours = results_par.xpath('./@aria-label').get()
-#         ind = 6
-#         while ind < len(potential_hours):
-#             if potential_hours[i-6:i] == "\u202f":
-#                 potential_hours[i-6:i]= " "
-#                 i-=5
-            
-
-#         print("Found data")
-
-
-city = 'calgary'
+city = 'Calgary'
 country = 'Canada'
-community = 'Evergreen'
 location_type = "parks"
 
 temp = LocationScraper(city, country)
 
-# hoods = temp.communities_finder()
 
-data = temp.search_locations(location_type=location_type)
 
-dict_reader(data)
+data = temp.search_POIs(POI_type=location_type)
 
-print("Communities:")
-count = 0
-for i in data:
-    print(f"{i}", end="  |  ")
-    if count == 5:
-        # print("")
-        count=0
-    else:
-        count+=1
+print("Break Point")
 
-# print("did this work?")
+
