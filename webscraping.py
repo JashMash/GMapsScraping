@@ -5,7 +5,6 @@ from selenium.webdriver.common.by import By
 
 from parsel import Selector
 
-# from bs4 import BeautifulSoup
 import requests
 
 from time import sleep
@@ -16,17 +15,13 @@ from datetime import datetime
 import pytz
 
 # Converting Open/plus code to Long and Lat
-from utils.openlocationcode import * # didnt really work
+from utils.openlocationcode import *
 
 # Converting address to long and lat
 from geopy.geocoders import Nominatim
 
 
 SCROLL_PAUSE_TIME = 0.5
-
-
-
-sleep(2)
 
 
 class LocationScraper:
@@ -96,8 +91,8 @@ class LocationScraper:
         """
 
         self.driver.get(url = f"https://www.google.com/maps/search/{POI_type}+in+{self.city}+{self.country}/")
-        search_box = self.driver.find_element(By.CLASS_NAME, "tactile-searchbox-input")
-        search_box.send_keys(POI_type)
+        # search_box = self.driver.find_element(By.CLASS_NAME, "tactile-searchbox-input")
+        # search_box.send_keys(POI_type)
 
         # Finds all results in the area
         results_par, results_sel = self.scroller(self.driver)
@@ -256,9 +251,6 @@ class LocationScraper:
         
         """
 
-        # current_dateTime = datetime.now(pytz.timezone("Canada/Mountain"))
-        # day = current_dateTime.strftime("%A")     
-
         try:
             results_par = response.xpath('//div[contains(@aria-label, ". Hide open hours")]')
             unformated_hours = results_par.xpath('./@aria-label').get()
@@ -279,9 +271,6 @@ class LocationScraper:
                 # holiday check
                 day, hours, _ = day_hours_split
                 day = day.split('(')[0]
-                print("got in here")
-                with open("./tests/holiday_hours.txt", "w") as f:
-                    f.write(response)
             else:  
                 day, hours = day_hours_split
             day = day.replace(' ', '')
@@ -295,7 +284,7 @@ class LocationScraper:
 
         return all_hours
 
-    def military_time(self, time:str)->str:
+    def military_time(self, time:str) -> str:
         """
             Converts 12 hour time to 24 hour clock
 
@@ -384,12 +373,12 @@ class LocationScraper:
 
         """
         html = driver.find_element(By.XPATH, '//div[contains(@aria-label, "Results for")]')
-        # while True:
-        #     html.send_keys(Keys.END)
+        while True:
+            html.send_keys(Keys.END)
 
-        #     end = driver.find_elements(By.XPATH, '//div[contains(@aria-label, "Results for")]/div/div')[-1]
-        #     if end.text == "You've reached the end of the list.":
-        #         break
+            end = driver.find_elements(By.XPATH, '//div[contains(@aria-label, "Results for")]/div/div')[-1]
+            if end.text == "You've reached the end of the list.":
+                break
         
         page_content = driver.page_source
         response = Selector(page_content)
@@ -397,18 +386,3 @@ class LocationScraper:
         results_par = response.xpath('//div[contains(@aria-label, "Results for")]/div/div[./a]')
         return results_par, results_sel
     
-
-
-city = 'Calgary'
-country = 'Canada'
-location_type = "parks"
-
-temp = LocationScraper(city, country)
-
-
-
-data = temp.search_POIs(POI_type=location_type)
-
-print("Break Point")
-
-
